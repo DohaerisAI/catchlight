@@ -11,7 +11,9 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.phoneaf.detect.Pt
+import com.phoneaf.focus.isTrackingArea
 import com.phoneaf.focus.spotMFor
+import com.phoneaf.focus.trackingSpotMFor
 import com.phoneaf.ptp.Ptp
 import com.phoneaf.ptp.PtpIpTransport
 import com.phoneaf.ptp.PtpTransport
@@ -111,6 +113,37 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
         if (mode) {
             val prop = _focusSettings.value?.focusModeProp ?: Ptp.PROP_FOCUS_MODE_PTP
             lastAfResult = "mode " + Ptp.name(cam.setU16Setting(prop, Ptp.FOCUS_AF_C).code)
+        }
+        Thread.sleep(250)
+        cam.resetAfPath()
+        pollNow = true
+    }
+
+    /** Result of the last Hybrid Focus Area change, for the settings screen. */
+    @Volatile var hybridAreaResult: String = ""
+        private set
+    private var areaBeforeHybrid: Int? = null
+
+    /**
+     * Hybrid tracking: switch the camera to Tracking: Flexible Spot M so its own Real-time
+     * Tracking follows the subject once Catchlight has placed the start point; switching off
+     * restores the Focus Area the camera had before.
+     */
+    fun setTrackingArea(on: Boolean) = submit { cam ->
+        val current = _focusSettings.value?.focusArea
+        if (on) {
+            if (isTrackingArea(current)) {
+                hybridAreaResult = "Camera already uses a Tracking focus area."
+            } else {
+                areaBeforeHybrid = current
+                val r = cam.setU16Setting(Ptp.PROP_FOCUS_AREA, trackingSpotMFor(current))
+                hybridAreaResult = if (r.ok) "Camera switched to Tracking: Flexible Spot M."
+                else "Camera refused the change (${Ptp.name(r.code)}). Set Focus Area → Tracking: Flexible Spot M on the camera."
+            }
+        } else {
+            areaBeforeHybrid?.let { cam.setU16Setting(Ptp.PROP_FOCUS_AREA, it) }
+            areaBeforeHybrid = null
+            hybridAreaResult = ""
         }
         Thread.sleep(250)
         cam.resetAfPath()

@@ -166,6 +166,7 @@ private fun StatusLine(ui: UiState, live: ConnState.Live, vm: PhoneAfViewModel, 
             Micro("%.0f fps".format(ui.liveFps))
             Micro("${ui.inferMs} ms")
         }
+        if (ui.hybrid) Micro("Hybrid", Ink.Text, modifier = Modifier.padding(start = 12.dp))
         if (ui.locked) {
             Micro("Locked ×", Ink.Text, modifier = Modifier.clickable { vm.releaseLock() }.padding(start = 12.dp))
         }
@@ -222,6 +223,7 @@ private fun ModeReadout(ui: UiState) {
             Micro(ui.modelShort.ifEmpty { "—" }, modifier = Modifier.padding(bottom = 6.dp))
         }
         val state = when {
+            ui.hybrid && ui.drive != AfDrive.OFF && ui.hybridState.isNotEmpty() -> ui.hybridState
             ui.decision != null -> "tracking"
             ui.detCount > 0 -> "subject found"
             else -> "searching"

@@ -40,6 +40,11 @@ private val MOVABLE_AREAS = setOf(5, 6, 7, 8, 12, 13, 14, 15) + setOf(0x0101, 0x
 private val ZONE_AREAS = setOf(0x0002, 10, 0x0202)
 private val FIXED_AREAS = setOf(0x0001, 0x0003, 4, 9, 11, 0x0201, 0x0203)
 
+/** Tracking: Flexible Spot M in whichever numbering this camera uses (Hybrid tracking). */
+fun trackingSpotMFor(current: Int?) = if (current != null && (current >= 0x0100 || current in 1..3)) 0x0205 else 13
+
+fun isTrackingArea(code: Int?) = code != null && (code in 0x0201..0x0208 || code in 9..15)
+
 /** Flexible Spot M in whichever numbering this camera uses. */
 fun spotMFor(current: Int?) = if (current != null && (current >= 0x0100 || current in 1..3)) 0x0102 else 6
 

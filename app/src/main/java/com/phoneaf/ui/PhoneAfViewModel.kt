@@ -67,6 +67,10 @@ data class UiState(
     val stickiness: Float = 0.5f,
     val minScore: Float = 0.35f,
     val roiZoom: Boolean = true,
+    /** Hybrid tracking: Catchlight picks and seeds the subject, the camera's own tracker follows it. */
+    val hybrid: Boolean = false,
+    val hybridState: String = "",
+    val hybridNote: String = "",
     val showAllSubjects: Boolean = true,
     val showCameraFrames: Boolean = true,
     val rotation: CamRotation = CamRotation.LANDSCAPE,
@@ -112,6 +116,7 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             rotation = runCatching { CamRotation.valueOf(prefs.getString("rotation", "")!!) }.getOrDefault(CamRotation.LANDSCAPE),
             classes = prefs.getStringSet("classes", emptySet())!!.toSet(),
             mode = runCatching { AfMode.valueOf(prefs.getString("mode", "")!!) }.getOrDefault(AfMode.BIRD_EYE),
+            hybrid = prefs.getBoolean("hybrid", false),
         ),
     )
     val ui: StateFlow<UiState> = _ui
@@ -139,7 +144,16 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var alreadyThere = false
 
     init {
-        viewModelScope.launch { session.state.collect { s -> _ui.update { it.copy(conn = s) } } }
+        viewModelScope.launch {
+            var wasLive = false
+            session.state.collect { s ->
+                _ui.update { it.copy(conn = s) }
+                val live = s is ConnState.Live
+                // Re-apply Hybrid's Tracking focus area on every new connection.
+                if (live && !wasLive && _ui.value.hybrid) session.setTrackingArea(true)
+                wasLive = live
+            }
+        }
         viewModelScope.launch {
             session.focusSettings.collect { s -> _ui.update { it.copy(readiness = evaluateReadiness(s)) } }
         }
@@ -261,7 +275,9 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             if (now - windowStart >= 1000) {
                 val fps = count * 1000f / (now - windowStart)
                 count = 0; windowStart = now
-                _ui.update { it.copy(liveFps = fps, afResult = session.lastAfResult, capability = session.capability) }
+                _ui.update {
+                    it.copy(liveFps = fps, afResult = session.lastAfResult, capability = session.capability, hybridNote = session.hybridAreaResult)
+                }
             }
             val frames = f.cameraFrames.map { cf ->
                 val c = Pt(cf.cx, cf.cy).camToView(rot)
@@ -352,7 +368,71 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         session.setAfPoint(cam)
     }
 
+    // ---- Hybrid tracking ------------------------------------------------------------------------
+    // Seed once (AF point on the eye + half-press), then let the camera's Real-time Tracking
+    // follow. Re-seed only when the subject changes or the camera's frame leaves our bird.
+
+    private var seededTrackId: Int? = null
+    private var offTargetFrames = 0
+    private var lastSeedMs = 0L
+
+    private fun driveHybrid(decision: FocusDecision?, st: UiState) {
+        val now = SystemClock.elapsedRealtime()
+        if (decision == null) {
+            if (seededTrackId != null && st.drive == AfDrive.SUBJECT && s1Held) {
+                s1Held = false
+                session.submit { it.halfPress(false) }
+            }
+            if (st.drive == AfDrive.ALWAYS && !s1Held) {
+                s1Held = true
+                session.submit { it.halfPress(true) }
+            }
+            seededTrackId = null
+            offTargetFrames = 0
+            setHybridState("searching")
+            return
+        }
+        // Is the camera's own AF frame still on the bird we chose?
+        val box = tracker.primary?.box?.expand(0.3f)
+        val frames = _ui.value.cameraFrames
+        val onTarget: Boolean? = if (box == null || frames.isEmpty()) null else frames.any { box.contains(Pt(it.cx, it.cy)) }
+        offTargetFrames = if (onTarget == false) offTargetFrames + 1 else 0
+
+        val newSubject = seededTrackId != decision.trackId
+        val drifted = offTargetFrames >= HYBRID_DRIFT_FRAMES
+        val blindTooLong = onTarget == null && now - lastSeedMs > HYBRID_BLIND_RESEED_MS
+        if ((newSubject || drifted || blindTooLong) && now - lastSeedMs > HYBRID_MIN_RESEED_MS) {
+            // The a7C ignores AF moves under S1; setAfPoint releases and re-presses around the move.
+            sendAf(decision.point)
+            if (!s1Held) {
+                s1Held = true
+                session.submit { it.halfPress(true) }
+            }
+            setHybridState(if (seededTrackId == null) "seeding" else if (drifted) "re-seeding (drift)" else "re-seeding")
+            seededTrackId = decision.trackId
+            lastSeedMs = now
+            offTargetFrames = 0
+        } else {
+            setHybridState(if (onTarget == true) "camera tracking" else "camera tracking (no frame info)")
+        }
+    }
+
+    private fun setHybridState(s: String) {
+        if (_ui.value.hybridState != s) _ui.update { it.copy(hybridState = s) }
+    }
+
+    fun setHybrid(on: Boolean) {
+        prefs.edit().putBoolean("hybrid", on).apply()
+        seededTrackId = null
+        _ui.update { it.copy(hybrid = on, hybridState = "") }
+        if (_ui.value.conn is ConnState.Live) session.setTrackingArea(on)
+    }
+
     private fun drive(decision: FocusDecision?, st: UiState) {
+        if (st.hybrid && st.drive != AfDrive.OFF) {
+            driveHybrid(decision, st)
+            return
+        }
         // Every move while S1 is held costs a release/re-press, so move less often then.
         val tuning = if (s1Held) st.tuning.copy(
             maxRateHz = minOf(st.tuning.maxRateHz, 6), deadbandGrid = maxOf(st.tuning.deadbandGrid, 14),
@@ -447,5 +527,13 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         parts?.close()
     }
 
-    companion object { private const val TAG = "PhoneAF" }
+    companion object {
+        private const val TAG = "PhoneAF"
+        /** Camera frame off our bird this many detection frames in a row → re-seed. */
+        private const val HYBRID_DRIFT_FRAMES = 5
+        /** Never re-seed more often than this (each seed costs a half-press cycle). */
+        private const val HYBRID_MIN_RESEED_MS = 400L
+        /** Bodies that report no AF frame: refresh the seed this often. */
+        private const val HYBRID_BLIND_RESEED_MS = 1500L
+    }
 }
