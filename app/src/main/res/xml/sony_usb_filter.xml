@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sony Corp. (0x054C), still-image / PTP class -->
+    <usb-device vendor-id="1356" class="6" subclass="1" protocol="1" />
+    <usb-device vendor-id="1356" />
+</resources>

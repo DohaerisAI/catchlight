@@ -1,0 +1,20 @@
+# Build output
+.gradle/
+.kotlin/
+build/
+*.apk
+*.aab
+
+# Local machine
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Models are published as GitHub release assets, not committed (see scripts/download_models.sh)
+app/src/main/assets/*.tflite
+app/src/main/assets/*.task
+
+# Python
+__pycache__/
+*.pyc
