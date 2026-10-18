@@ -2,6 +2,9 @@ package com.phoneaf.detect
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
@@ -86,18 +89,33 @@ class YoloModel(buffer: MappedByteBuffer, labelsOverride: List<String>?) : Objec
         .order(ByteOrder.nativeOrder())
     private val pixels = IntArray(size * size)
     private val output = Array(1) { Array(outShape[1]) { FloatArray(outShape[2]) } }
+    // Reused every frame: no per-frame bitmap or tensor allocations (no GC pauses in live view).
+    private val scaled = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    private val canvas = Canvas(scaled)
+    private val dst = Rect(0, 0, size, size)
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val floats = FloatArray(size * size * 3)
+    private val bytes = ByteArray(size * size * 3)
 
     override fun run(image: Bitmap, minScore: Float): List<RawDet> {
-        val scaled = Bitmap.createScaledBitmap(image, size, size, true)
+        canvas.drawBitmap(image, null, dst, paint)
         scaled.getPixels(pixels, 0, size, 0, 0, size, size)
         input.rewind()
-        for (p in pixels) {
-            val r = (p shr 16) and 0xFF; val g = (p shr 8) and 0xFF; val bl = p and 0xFF
-            if (inputType == DataType.FLOAT32) {
-                input.putFloat(r / 255f); input.putFloat(g / 255f); input.putFloat(bl / 255f)
-            } else {
-                input.put(r.toByte()); input.put(g.toByte()); input.put(bl.toByte())
+        // Fill a plain array in a tight loop, then copy it into the tensor in one bulk call.
+        if (inputType == DataType.FLOAT32) {
+            var j = 0
+            for (p in pixels) {
+                floats[j++] = ((p shr 16) and 0xFF) * INV255
+                floats[j++] = ((p shr 8) and 0xFF) * INV255
+                floats[j++] = (p and 0xFF) * INV255
             }
+            input.asFloatBuffer().put(floats)
+        } else {
+            var j = 0
+            for (p in pixels) {
+                bytes[j++] = (p shr 16).toByte(); bytes[j++] = (p shr 8).toByte(); bytes[j++] = p.toByte()
+            }
+            input.put(bytes)
         }
         input.rewind()
         interp.run(input, output)
@@ -131,6 +149,8 @@ class YoloModel(buffer: MappedByteBuffer, labelsOverride: List<String>?) : Objec
     override fun close() = interp.close()
 
     companion object {
+        private const val INV255 = 1f / 255f
+
         fun nms(dets: List<RawDet>, iou: Float): List<RawDet> {
             val out = ArrayList<RawDet>()
             for (d in dets.sortedByDescending { it.score }) {

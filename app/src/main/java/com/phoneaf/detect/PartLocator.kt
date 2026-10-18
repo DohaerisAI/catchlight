@@ -36,6 +36,10 @@ class PartLocator(context: Context, poseModel: MappedByteBuffer?) : AutoCloseabl
     private val face: FaceDetector?
 
     val hasPoseModel get() = pose != null
+    // Reused between frames (the pose model runs on every frame that has a bird).
+    private var poseInput: ByteBuffer? = null
+    private var posePixels: IntArray? = null
+    private var poseFloats: FloatArray? = null
     val hasFaceModel get() = face != null
 
     init {
@@ -99,17 +103,26 @@ class PartLocator(context: Context, poseModel: MappedByteBuffer?) : AutoCloseabl
         val interp = pose!!
         val (crop, region) = squareCrop(frame, d.box, 1.15f, poseSize)
 
-        val input = ByteBuffer.allocateDirect(poseSize * poseSize * 3 * if (poseInputType == DataType.FLOAT32) 4 else 1)
-            .order(ByteOrder.nativeOrder())
-        val px = IntArray(poseSize * poseSize)
+        val input = poseInput ?: ByteBuffer.allocateDirect(poseSize * poseSize * 3 * if (poseInputType == DataType.FLOAT32) 4 else 1)
+            .order(ByteOrder.nativeOrder()).also { poseInput = it }
+        val px = posePixels ?: IntArray(poseSize * poseSize).also { posePixels = it }
         crop.getPixels(px, 0, poseSize, 0, 0, poseSize, poseSize)
-        for (p in px) {
-            val r = (p shr 16) and 0xFF; val g = (p shr 8) and 0xFF; val b = p and 0xFF
-            when (poseInputType) {
-                DataType.FLOAT32 -> { input.putFloat(r / 255f); input.putFloat(g / 255f); input.putFloat(b / 255f) }
-                DataType.INT8 -> { input.put((r - 128).toByte()); input.put((g - 128).toByte()); input.put((b - 128).toByte()) }
-                else -> { input.put(r.toByte()); input.put(g.toByte()); input.put(b.toByte()) }
+        input.rewind()
+        if (poseInputType == DataType.FLOAT32) {
+            val f = poseFloats ?: FloatArray(poseSize * poseSize * 3).also { poseFloats = it }
+            var j = 0
+            for (p in px) {
+                f[j++] = ((p shr 16) and 0xFF) / 255f; f[j++] = ((p shr 8) and 0xFF) / 255f; f[j++] = (p and 0xFF) / 255f
             }
+            input.asFloatBuffer().put(f)
+        } else {
+            val off = if (poseInputType == DataType.INT8) 128 else 0
+            val b = ByteArray(poseSize * poseSize * 3)
+            var j = 0
+            for (p in px) {
+                b[j++] = (((p shr 16) and 0xFF) - off).toByte(); b[j++] = (((p shr 8) and 0xFF) - off).toByte(); b[j++] = ((p and 0xFF) - off).toByte()
+            }
+            input.put(b)
         }
         input.rewind()
 

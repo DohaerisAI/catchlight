@@ -370,6 +370,7 @@ private fun ConnectScreen(ui: UiState, vm: PhoneAfViewModel, onSettings: () -> U
         ConnState.Connecting -> "Connecting…" to Ink.Warn
         is ConnState.Live -> "Waiting for live view · ${c.model}" to Ink.Accent
         is ConnState.Failed -> c.reason to Ink.Alert
+        is ConnState.Reconnecting -> "Reconnecting · try ${c.attempt} in ${c.nextInSec}s · ${c.reason}" to Ink.Warn
     }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 28.dp),

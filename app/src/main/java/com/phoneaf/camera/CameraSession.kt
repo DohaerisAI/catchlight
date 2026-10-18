@@ -30,6 +30,8 @@ sealed interface ConnState {
     data object AwaitingPermission : ConnState
     data object Connecting : ConnState
     data class Live(val model: String, val protocol: Int, val via: String = "USB") : ConnState
+    /** The link dropped after being live; retrying with backoff. */
+    data class Reconnecting(val reason: String, val attempt: Int, val nextInSec: Int) : ConnState
     data class Failed(val reason: String) : ConnState
 }
 
@@ -183,7 +185,11 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
     /** Use one AF delivery method from now on (chosen after the AF test). */
     fun forceAfPath(path: SonyCamera.AfPath?) = submit { it.afPath = path; it.afAuto = path == null }
 
-    private fun start(device: UsbDevice) = startWith { UsbPtpTransport.open(usb, device) }
+    private fun start(device: UsbDevice) = startWith {
+        // On reconnect the camera may have re-enumerated (e.g. after power save) as a new device.
+        val current = usb.deviceList.values.firstOrNull { isSony(it) && usb.hasPermission(it) } ?: device
+        UsbPtpTransport.open(usb, current)
+    }
 
     /**
      * Wi-Fi: PC Remote over PTP/IP. [host] is the camera's IP (Wi-Fi Direct: usually the
@@ -192,20 +198,26 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
      */
     fun connectWifi(host: String?) {
         if (running) return
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val wifi = cm.allNetworks.firstOrNull { n ->
-            cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        }
-        if (wifi == null) {
+        if (findWifi() == null) {
             _state.value = ConnState.Failed("Phone isn't on Wi-Fi. Join the camera's network (DIRECT-…) first.")
             return
         }
-        val target = host?.takeIf { it.isNotBlank() }
-            ?: cm.getLinkProperties(wifi)?.routes?.firstOrNull { it.isDefaultRoute && it.gateway != null }
-                ?.gateway?.hostAddress
-            ?: DEFAULT_CAMERA_IP
-        lastWifiHost = target
-        startWith { PtpIpTransport.connect(target, clientGuid(), "phoneAF", wifi.socketFactory) }
+        // Resolved again on every (re)connect attempt: after a Wi-Fi drop the old network handle is dead.
+        startWith {
+            val (network, cm) = findWifi() ?: return@startWith null to "Phone isn't on Wi-Fi"
+            val target = host?.takeIf { it.isNotBlank() }
+                ?: cm.getLinkProperties(network)?.routes?.firstOrNull { it.isDefaultRoute && it.gateway != null }
+                    ?.gateway?.hostAddress
+                ?: DEFAULT_CAMERA_IP
+            lastWifiHost = target
+            PtpIpTransport.connect(target, clientGuid(), "Catchlight", network.socketFactory)
+        }
+    }
+
+    private fun findWifi(): Pair<android.net.Network, ConnectivityManager>? {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val n = cm.allNetworks.firstOrNull { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+        return n?.let { it to cm }
     }
 
     @Volatile var lastWifiHost: String = ""
@@ -246,19 +258,45 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
         runCatching { context.unregisterReceiver(receiver) }
     }
 
+    /**
+     * Owns one connection for its whole life. If a session that was live drops (camera power
+     * save, a USB hiccup, Wi-Fi blip) it reconnects with backoff; a first connection that never
+     * went live fails straight away, since that is usually a camera setting the user must fix.
+     */
     private fun ioLoop(open: () -> Pair<PtpTransport?, String>) {
-        val (transport, openError) = open()
-        if (transport == null) {
-            _state.value = ConnState.Failed(openError)
-            running = false
-            return
-        }
-        val cam = SonyCamera(transport)
-        try {
-            cam.connect()?.let { reason ->
+        var attempt = 0
+        var everLive = false
+        while (running) {
+            val (wasLive, reason) = runSession(open)
+            everLive = everLive || wasLive
+            if (!running) break
+            if (wasLive) attempt = 0
+            if (!everLive) {
                 _state.value = ConnState.Failed(reason)
-                return
+                break
             }
+            if (++attempt > MAX_RECONNECTS) {
+                _state.value = ConnState.Failed("$reason. Gave up reconnecting; tap Connect to try again.")
+                break
+            }
+            val waitMs = minOf(1000L shl (attempt - 1).coerceAtMost(3), 8000L)
+            _state.value = ConnState.Reconnecting(reason, attempt, (waitMs / 1000).toInt())
+            Log.w(TAG, "connection lost ($reason); retry $attempt in ${waitMs}ms")
+            val until = System.currentTimeMillis() + waitMs
+            while (running && System.currentTimeMillis() < until) Thread.sleep(100)
+        }
+        running = false
+    }
+
+    /** One connect → live-view session. Returns (reached live view, why it ended). */
+    private fun runSession(open: () -> Pair<PtpTransport?, String>): Pair<Boolean, String> {
+        val (transport, openError) = open()
+        if (transport == null) return false to openError
+        val cam = SonyCamera(transport)
+        var live = false
+        try {
+            cam.connect()?.let { reason -> return false to reason }
+            live = true
             _state.value = ConnState.Live(cam.model, cam.protocol, if (transport is PtpIpTransport) "Wi-Fi" else "USB")
             var misses = 0
             var lastPoll = 0L
@@ -282,24 +320,23 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
                 }
                 val frame = cam.liveView()
                 if (frame == null) {
-                    if (++misses > 150) {
-                        _state.value = ConnState.Failed("Live view stopped responding")
-                        break
-                    }
+                    if (++misses > 150) return true to "Live view stopped responding"
                     Thread.sleep(15)
                 } else {
                     misses = 0
                     onFrame(frame)
                 }
             }
+            return true to "Disconnected"
         } catch (t: Throwable) {
             Log.e(TAG, "io loop crashed", t)
-            _state.value = ConnState.Failed(t.message ?: t.javaClass.simpleName)
+            return live to (t.message ?: t.javaClass.simpleName)
         } finally {
             runCatching { cam.halfPress(false) }
-            cam.release()
+            runCatching { cam.release() }
             transport.close()
-            running = false
+            commands.clear()
+            pendingAf.set(null)
         }
     }
 
@@ -314,5 +351,7 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
         private const val TAG = "CameraSession"
         const val DEFAULT_CAMERA_IP = "192.168.122.1" // Sony Wi-Fi Direct default
         private const val ACTION_PERMISSION = "com.phoneaf.USB_PERMISSION"
+        /** About two minutes of retries (1, 2, 4, then 8 s apart) before giving up. */
+        private const val MAX_RECONNECTS = 16
     }
 }

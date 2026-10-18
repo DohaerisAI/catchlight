@@ -149,6 +149,7 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             session.state.collect { s ->
                 _ui.update { it.copy(conn = s) }
                 val live = s is ConnState.Live
+                if (!live) { s1Held = false; seededTrackId = null }
                 // Re-apply Hybrid's Tracking focus area on every new connection.
                 if (live && !wasLive && _ui.value.hybrid) session.setTrackingArea(true)
                 wasLive = live
