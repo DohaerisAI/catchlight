@@ -10,8 +10,8 @@ fetch() { [ -f "$2" ] || { echo "↓ $2"; curl -fL --progress-bar -o "$2" "$1"; 
 
 fetch "$base/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite" efficientdet_lite0.tflite
 fetch "$base/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite" blaze_face_short_range.tflite
-release=https://github.com/DohaerisAI/catchlight/releases/download/models-v1
-for m in yolo11n_320 yolo11n_640 yolo11s_320 yolo11s_640; do
+release=https://github.com/DohaerisAI/catchlight/releases/download/models-v2
+for m in yolo11n_320_int8 yolo11n_640_int8 yolo11s_320_int8 yolo11s_640_int8; do
   fetch "$release/$m.tflite" "$m.tflite"
 done
 if [ "${1:-}" = "--big" ]; then

@@ -1,21 +1,22 @@
-# phoneAF models: what's in and what's out
+# Catchlight models: what's in and what's out
 
 Pick models in **⚙ Settings → Subject detector** and **Eye / head model**. Pick classes with the **CLASS** button.
 
 ## ✅ In the app
 
 ### Subject detectors (find the bird, animal, person or object)
-| Model | Where | Licence | COCO mAP | Eagle test* | Mac M1 CPU | Use it for |
-|---|---|---|---|---|---|---|
-| **YOLO11n · 320** *(default)* | bundled | AGPL-3.0 | 39.5† | bird 82% | 17 ms | everyday birding, good balance |
-| **YOLO11n · 640** | bundled | AGPL-3.0 | 39.5 | bird 86% | 52 ms | small / distant birds |
-| **YOLO11s · 320** | bundled | AGPL-3.0 | 47.0† | bird 91% | 38 ms | more confident, still quick |
-| **YOLO11s · 640** | bundled | AGPL-3.0 | 47.0 | bird 93% | 188 ms | best accuracy, recent phones only |
-| **EfficientDet-Lite0** | bundled | Apache-2.0 | ~25 | bird 77% | — | old phones, big close subjects |
-| **EfficientDet-Lite2** | in-app download (22 MB) | Apache-2.0 | ~33 | bird 90% | — | fully permissive licence |
-| **Your own .tflite** | Import | yours | — | — | custom classes, e.g. `bird_head`, `bird_eye` |
+| Model | Where | Licence | Birds found | In flight | Bird at 5% of frame | Mac M1 CPU | Use it for |
+|---|---|---|---|---|---|---|---|
+| **Auto** *(default)* | bundled | AGPL-3.0 | — | — | — | 15–42 ms | picks s·320 for big birds, s·640 for small, far and flying ones |
+| **YOLO11s · 640 INT8** | bundled | AGPL-3.0 | 90% | 97% | 75% | 42 ms | best accuracy |
+| **YOLO11s · 320 INT8** | bundled | AGPL-3.0 | 82% | 75% | 25% | 15 ms | fast all-rounder |
+| **YOLO11n · 640 INT8** | bundled | AGPL-3.0 | 82% | 75% | 35% | 23 ms | older phones, distant birds |
+| **YOLO11n · 320 INT8** | bundled | AGPL-3.0 | 78% | 69% | 20% | 12 ms | lightest |
+| **EfficientDet-Lite0** | bundled | Apache-2.0 | — | — | — | — | fully permissive licence, big close subjects |
+| **EfficientDet-Lite2** | in-app download (22 MB) | Apache-2.0 | — | — | — | — | fully permissive licence, more accurate |
+| **Your own .tflite** | Import | yours | — | — | — | — | custom classes, e.g. `bird_head`, `bird_eye` |
 
-\* Your phone photo of the eagle on a monitor, same live-view crop for every model. † mAP is measured at 640; it is lower at 320. Phone speeds are similar to the M1 on a recent flagship and 2–3× slower on mid-range phones.
+Numbers: `tools/bench_birds.py` on 196 freely licensed photos and a distance sweep at a7C live-view size. INT8 models are calibrated on bird photos; s·640 loses nothing to quantization, the small n-models lose a few points. FP16 versions: release `models-v1`.
 
 All of these know the 80 COCO classes. That includes **bird**, 9 mammals (cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe), **person**, and objects such as airplane, car, motorcycle, bicycle, train, boat and sports ball. Use the **Objects** or **Moving objects** AF mode with the class picker for non-living subjects.
 

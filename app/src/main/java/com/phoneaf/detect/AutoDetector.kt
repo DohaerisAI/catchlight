@@ -3,21 +3,23 @@ package com.phoneaf.detect
 /**
  * "Auto" subject model: picks the detector per frame from the tracked bird's size.
  *
- * Thresholds come from tools/bench_birds.py (distance sweep at a7C live-view width):
- *   bird >= 15% of frame  -> YOLO11n·320 finds ~92% in ~16 ms; bigger models add only latency
- *   6–15%                 -> n·320 collapses (30–75%); n·640 holds 85–100%
- *   < 6%                  -> only YOLO11s·640 still finds most birds (75% at 5% width)
- * Bird-in-flight modes never use s·640: at ~3x its speed n·640 keeps tracking a fast subject.
+ * Thresholds come from tools/bench_birds.py (distance sweep at a7C live-view width, INT8 models):
+ *   bird >= 15% of frame  -> YOLO11s·320 finds 85–95% in ~15 ms
+ *   below 15% and in BIF  -> YOLO11s·640: 97% of birds in flight, 75% at 5% width, ~42 ms
  */
 class AutoDetector(private val open: (Tier) -> SubjectDetector?) : AutoCloseable {
 
+    // INT8 benchmark (tools/bench_birds.py): s·640 INT8 equals s·640 FP16 in accuracy at a third
+    // of the time, so the middle and strong tiers now share one model; the strong tier only
+    // keeps its own hysteresis band for tiny, perched birds.
     enum class Tier(val modelId: String, val short: String) {
-        FAST("yolo11n-320", "n320"),
-        MID("yolo11n-640", "n640"),
-        STRONG("yolo11s-640", "s640"),
+        FAST("yolo11s-320", "s320"),
+        MID("yolo11s-640", "s640"),
+        STRONG("yolo11s-640", "s640+"),
     }
 
-    private val loaded = HashMap<Tier, SubjectDetector?>()
+    /** One detector per model file, shared by tiers that use the same model. */
+    private val loaded = HashMap<String, SubjectDetector?>()
     var current = Tier.MID      // searching for a subject: start wide-and-sensitive
         private set
     private var pending: Tier? = null
@@ -28,7 +30,7 @@ class AutoDetector(private val open: (Tier) -> SubjectDetector?) : AutoCloseable
         private set
 
     fun detector(tier: Tier = current): SubjectDetector? =
-        loaded.getOrPut(tier) { open(tier) } ?: loaded.getOrPut(Tier.FAST) { open(Tier.FAST) }
+        loaded.getOrPut(tier.modelId) { open(tier) } ?: loaded.getOrPut(Tier.FAST.modelId) { open(Tier.FAST) }
 
     /**
      * Decide which tier the *next* frame should use.

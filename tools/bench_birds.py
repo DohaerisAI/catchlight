@@ -328,10 +328,12 @@ def main():
     ap.add_argument("--models", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--sweep-birds", type=int, default=20)
+    ap.add_argument("--names", default="yolo11n_320,yolo11n_640,yolo11s_640",
+                    help="comma-separated model files (without .tflite) to compare; the last one is drawn in the gallery")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     md = Path(a.models)
-    models = [Yolo(str(md / n)) for n in ("yolo11n_320.tflite", "yolo11n_640.tflite", "yolo11s_640.tflite")]
+    models = [Yolo(str(md / (n + ".tflite"))) for n in a.names.split(",")]
     pose = Pose(str(md / "bird_pose.tflite"))
     images = sorted(p for p in glob.glob(os.path.join(a.images, "*")) if p.lower().endswith((".jpg", ".jpeg", ".png")))
     meta_path = Path(a.images) / "attribution.json"

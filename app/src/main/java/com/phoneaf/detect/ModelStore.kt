@@ -140,7 +140,7 @@ class ModelStore(private val context: Context) {
     companion object {
         val AUTO_SPEC = ModelSpec(
             AutoDetector.ID, "Auto (by bird size)", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
-            Origin.BUNDLED, "", blurb = "Recommended. n·320 for big birds, n·640 for small ones and BIF, s·640 for tiny distant birds.",
+            Origin.BUNDLED, "", blurb = "Recommended. YOLO11s·320 for big birds, YOLO11s·640 for small, distant and flying ones.",
         )
         val CATALOG = listOf(
             ModelSpec(
@@ -148,25 +148,27 @@ class ModelStore(private val context: Context) {
                 Origin.BUNDLED, "efficientdet_lite0.tflite", sizeMb = 4,
                 blurb = "Fastest. 80 classes. Fine for big, close subjects.",
             ),
-            ModelSpec(
-                "yolo11n-320", "YOLO11n · 320", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
-                Origin.BUNDLED, "yolo11n_320.tflite", sizeMb = 5,
-                blurb = "Fast and clearly more accurate than Lite0. Good default.",
-            ),
-            ModelSpec(
-                "yolo11n-640", "YOLO11n · 640", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
-                Origin.BUNDLED, "yolo11n_640.tflite", sizeMb = 5,
-                blurb = "Same model at 4x the pixels: finds small, distant birds.",
-            ),
+            // YOLO11, INT8 (calibrated on bird photos; tools/export_yolo.py --int8). Mac M1 CPU timings
+            // from tools/bench_birds.py: 196 photos + distance sweep at a7C live-view size.
             ModelSpec(
                 "yolo11s-320", "YOLO11s · 320", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
-                Origin.BUNDLED, "yolo11s_320.tflite", sizeMb = 19,
-                blurb = "Bigger model, small input: more confident, still quick.",
+                Origin.BUNDLED, "yolo11s_320_int8.tflite", sizeMb = 10,
+                blurb = "Fast all-rounder. 82% of birds found · ~15 ms.",
             ),
             ModelSpec(
                 "yolo11s-640", "YOLO11s · 640", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
-                Origin.BUNDLED, "yolo11s_640.tflite", sizeMb = 19,
-                blurb = "Most accurate. Slowest; best on recent phones.",
+                Origin.BUNDLED, "yolo11s_640_int8.tflite", sizeMb = 10,
+                blurb = "Most accurate: 90% of birds, 97% in flight, 75% at 5% of frame · ~42 ms.",
+            ),
+            ModelSpec(
+                "yolo11n-320", "YOLO11n · 320", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
+                Origin.BUNDLED, "yolo11n_320_int8.tflite", sizeMb = 3,
+                blurb = "Lightest. For older phones · ~12 ms.",
+            ),
+            ModelSpec(
+                "yolo11n-640", "YOLO11n · 640", ModelRole.SUBJECT, Engine.YOLO, "AGPL-3.0",
+                Origin.BUNDLED, "yolo11n_640_int8.tflite", sizeMb = 3,
+                blurb = "Light model, high resolution · ~23 ms.",
             ),
             ModelSpec(
                 "effdet-lite2", "EfficientDet-Lite2", ModelRole.SUBJECT, Engine.MEDIAPIPE, "Apache-2.0",

@@ -40,7 +40,9 @@ def main():
             else:
                 kw.update(half=True)
             saved = Path(model.export(**kw))
-            pattern = "*_full_integer_quant.tflite" if a.int8 else "*_float16.tflite"
+            # integer_quant = INT8 maths with float32 input/output (what YoloModel.kt feeds); the
+            # full_integer_quant variant would need int8 input handling in the app.
+            pattern = "*[!l]_integer_quant.tflite" if a.int8 else "*_float16.tflite"
             src = saved if saved.suffix == ".tflite" else Path(sorted(glob.glob(str(saved / pattern)))[0])
             dst = out / (f"yolo11{size}_{imgsz}" + ("_int8" if a.int8 else "") + ".tflite")
             shutil.copy(src, dst)
