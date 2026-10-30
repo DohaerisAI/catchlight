@@ -141,13 +141,13 @@ class PtpIpTransport private constructor(
          * @param guid 16 bytes, stable per phone: Access Point pairing on the camera remembers it.
          * @param factory socket factory bound to the camera's Wi-Fi network.
          */
-        fun connect(host: String, guid: ByteArray, name: String, factory: SocketFactory): Pair<PtpIpTransport?, String> {
+        fun connect(host: String, guid: ByteArray, name: String, factory: SocketFactory, connectTimeoutMs: Int = 5000): Pair<PtpIpTransport?, String> {
             var cmd: Socket? = null
             var evt: Socket? = null
             try {
                 cmd = factory.createSocket().apply {
                     tcpNoDelay = true; soTimeout = 5000
-                    connect(InetSocketAddress(host, PORT), 5000)
+                    connect(InetSocketAddress(host, PORT), connectTimeoutMs)
                 }
                 // Init Command Request: GUID, UCS-2 name (NUL-terminated), version 1.0.
                 val nameBytes = (name + "\u0000").toCharArray()
@@ -168,7 +168,7 @@ class PtpIpTransport private constructor(
 
                 evt = factory.createSocket().apply {
                     tcpNoDelay = true; soTimeout = 5000
-                    connect(InetSocketAddress(host, PORT), 5000)
+                    connect(InetSocketAddress(host, PORT), connectTimeoutMs)
                 }
                 evt.getOutputStream().write(le(12).putInt(12).putInt(TYPE_INIT_EVENT_REQUEST).putInt(connNumber).array())
                 val (etype, _) = readPacket(evt.getInputStream())
@@ -180,8 +180,7 @@ class PtpIpTransport private constructor(
                 return PtpIpTransport(cmd, evt, host) to ""
             } catch (e: Exception) {
                 runCatching { cmd?.close() }; runCatching { evt?.close() }
-                return null to "Can't reach camera at $host:$PORT (${e.javaClass.simpleName}). " +
-                    "Is the phone on the camera's Wi-Fi and PC Remote set to Wi-Fi?"
+                return null to "$host: ${e.message ?: e.javaClass.simpleName}"
             }
         }
 

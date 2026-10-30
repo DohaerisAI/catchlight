@@ -20,6 +20,9 @@ import com.phoneaf.ptp.PtpTransport
 import com.phoneaf.ptp.UsbPtpTransport
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.LinkProperties
+import android.net.wifi.WifiManager
+import java.net.Inet4Address
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -205,14 +208,44 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
         // Resolved again on every (re)connect attempt: after a Wi-Fi drop the old network handle is dead.
         startWith {
             val (network, cm) = findWifi() ?: return@startWith null to "Phone isn't on Wi-Fi"
-            val target = host?.takeIf { it.isNotBlank() }
-                ?: cm.getLinkProperties(network)?.routes?.firstOrNull { it.isDefaultRoute && it.gateway != null }
-                    ?.gateway?.hostAddress
-                ?: DEFAULT_CAMERA_IP
-            lastWifiHost = target
-            PtpIpTransport.connect(target, clientGuid(), "Catchlight", network.socketFactory)
+            val lp = cm.getLinkProperties(network)
+            val phoneIp = lp?.linkAddresses?.firstOrNull { it.address is Inet4Address }?.address?.hostAddress ?: "no IPv4"
+            val tried = mutableListOf<String>()
+            for (target in cameraCandidates(host, lp)) {
+                val (t, err) = PtpIpTransport.connect(target, clientGuid(), "Catchlight", network.socketFactory, connectTimeoutMs = 3000)
+                if (t != null) { lastWifiHost = target; return@startWith t to "" }
+                tried += err
+                Log.w(TAG, "Wi-Fi candidate failed: $err")
+            }
+            null to "Couldn't reach the camera over Wi-Fi. Phone IP $phoneIp. Tried ${tried.joinToString(" · ")}. " +
+                "Check the phone is joined to the camera's DIRECT-… network (Android may switch away from a network with no internet) " +
+                "and the camera shows PC Remote waiting for a connection."
         }
     }
+
+    /**
+     * Where the camera might be, best guess first. In Wi-Fi Direct the camera runs the network:
+     * it is the DHCP server and the gateway. Sony's usual address is the last resort.
+     */
+    private fun cameraCandidates(host: String?, lp: LinkProperties?): List<String> {
+        val out = LinkedHashSet<String>()
+        host?.trim()?.takeIf { it.isNotEmpty() }?.let { out += it }
+        if (Build.VERSION.SDK_INT >= 30) lp?.dhcpServerAddress?.hostAddress?.let { out += it }
+        lp?.routes?.mapNotNull { r -> r.gateway?.takeIf { it is Inet4Address && !it.isAnyLocalAddress }?.hostAddress }?.forEach { out += it }
+        @Suppress("DEPRECATION")
+        (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.dhcpInfo?.let { d ->
+            if (d.serverAddress != 0) out += ipv4(d.serverAddress)
+            if (d.gateway != 0) out += ipv4(d.gateway)
+        }
+        // Same subnet, host .1: the usual address of whatever runs a small network.
+        lp?.linkAddresses?.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
+            ?.let { out += it.substringBeforeLast('.') + ".1" }
+        out += DEFAULT_CAMERA_IP
+        return out.filter { it.isNotBlank() && !it.contains(':') && it != "0.0.0.0" }
+    }
+
+    /** DhcpInfo packs IPv4 little-endian. */
+    private fun ipv4(i: Int) = "${i and 0xFF}.${(i shr 8) and 0xFF}.${(i shr 16) and 0xFF}.${(i shr 24) and 0xFF}"
 
     private fun findWifi(): Pair<android.net.Network, ConnectivityManager>? {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

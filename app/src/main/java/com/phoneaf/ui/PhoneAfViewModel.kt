@@ -98,7 +98,7 @@ data class UiState(
     val topDet: String? = null,
     val afResult: String = "–",
     val capability: String = "",
-    val modelInfo: String = "loading models…",
+    val modelInfo: String = "Models load when the camera connects",
     val modelError: String? = null,
     val frameAspect: Float = 3f / 2f,
 ) {
