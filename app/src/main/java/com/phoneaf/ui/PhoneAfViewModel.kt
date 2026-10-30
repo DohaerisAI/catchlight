@@ -73,6 +73,10 @@ data class UiState(
     val hybridNote: String = "",
     val showAllSubjects: Boolean = true,
     val showCameraFrames: Boolean = true,
+    /** Pressing the camera's wheel nudges its AF spot; Catchlight reads that as "switch subject". */
+    val dialSwitch: Boolean = true,
+    /** Last dial switch, e.g. "→ bird", shown briefly; empty when none. */
+    val dialNote: String = "",
     val rotation: CamRotation = CamRotation.LANDSCAPE,
     /** Labels the user restricted detection to (empty = everything the mode allows). */
     val classes: Set<String> = emptySet(),
@@ -117,6 +121,7 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             classes = prefs.getStringSet("classes", emptySet())!!.toSet(),
             mode = runCatching { AfMode.valueOf(prefs.getString("mode", "")!!) }.getOrDefault(AfMode.BIRD_EYE),
             hybrid = prefs.getBoolean("hybrid", false),
+            dialSwitch = prefs.getBoolean("dialSwitch", true),
         ),
     )
     val ui: StateFlow<UiState> = _ui
@@ -136,6 +141,11 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
     private val focus = FocusController()
     @Volatile private var s1Held = false
     private val pendingTap = AtomicReference<Pt?>(null)
+    /** Direction of a camera-dial nudge, waiting for the detection thread. */
+    private val pendingNudge = AtomicReference<Pt?>(null)
+    private var prevCamCenter: Pt? = null
+    private var lastNudgeMs = 0L
+    private var dialNoteMs = 0L
     private val unlockRequested = AtomicBoolean(false)
 
     /** Last AF point sent, in camera coordinates, for checking that the camera follows it. */
@@ -285,6 +295,7 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
                 val swap = rot.degrees % 180 != 0
                 cf.copy(cx = c.x, cy = c.y, w = if (swap) cf.h else cf.w, h = if (swap) cf.w else cf.h)
             }
+            detectDialNudge(frames, now)
             _ui.update { it.copy(cameraFrames = frames, frameAspect = bmp.width.toFloat() / bmp.height) }
         }
     }
@@ -329,6 +340,7 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             // Tracking first (gives us motion), then parts only for the subject that matters.
             tracker.update(found, st.mode, st.stickiness, ts)
             pendingTap.getAndSet(null)?.let(::applyTap)
+            pendingNudge.getAndSet(null)?.let { applyNudge(it, st) }
             if (unlockRequested.getAndSet(false)) tracker.clearLock()
             val primary = tracker.primary
             if (primary != null && primary.misses == 0) {
@@ -429,7 +441,67 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         if (_ui.value.conn is ConnState.Live) session.setTrackingArea(on)
     }
 
+    // ---- Camera-dial subject switching -------------------------------------------------------
+    // The a7C does not report button presses over PTP, but it does report where its AF frame is.
+    // When the frame jumps and Catchlight didn't move it, the photographer pressed the wheel:
+    // switch to the nearest subject in that direction.
+
+    private fun detectDialNudge(frames: List<CameraFocusFrame>, now: Long) {
+        val st = _ui.value
+        // In Hybrid the camera's own tracker moves the frame constantly, so jumps mean nothing.
+        if (!st.dialSwitch || (st.hybrid && st.drive != AfDrive.OFF) || frames.isEmpty()) { prevCamCenter = null; return }
+        // Flexible Spot is reported as several boxes (frame + direction marks); their centroid moves with the spot.
+        val c = Pt(frames.map { it.cx }.average().toFloat(), frames.map { it.cy }.average().toFloat())
+        val prev = prevCamCenter
+        prevCamCenter = c
+        if (prev == null) return
+        val d = c - prev
+        if (kotlin.math.hypot(d.x, d.y) < NUDGE_MIN_JUMP) return
+        if (now - lastSentMs < NUDGE_IGNORE_AFTER_SEND_MS) return          // our own move settling
+        val sent = lastSentCam?.camToView(st.rotation)
+        if (sent != null && c.dist(sent) < 0.05f) return                     // frame arrived where we sent it
+        if (now - lastNudgeMs < NUDGE_DEBOUNCE_MS) return
+        lastNudgeMs = now
+        pendingNudge.set(d)
+    }
+
+    /** Runs on the detection thread: lock onto the nearest subject in the nudge direction. */
+    private fun applyNudge(d: Pt, st: UiState) {
+        val cur = tracker.primary ?: return
+        val horizontal = kotlin.math.abs(d.x) >= kotlin.math.abs(d.y)
+        val next = tracker.all
+            .filter { it.id != cur.id && it.misses == 0 && it.det.kind in st.mode.kinds }
+            .filter {
+                val v = it.center - cur.center
+                if (horizontal) kotlin.math.sign(v.x) == kotlin.math.sign(d.x) && kotlin.math.abs(v.x) > 0.02f
+                else kotlin.math.sign(v.y) == kotlin.math.sign(d.y) && kotlin.math.abs(v.y) > 0.02f
+            }
+            .minByOrNull {
+                val v = it.center - cur.center
+                if (horizontal) kotlin.math.abs(v.x) + 0.5f * kotlin.math.abs(v.y) else kotlin.math.abs(v.y) + 0.5f * kotlin.math.abs(v.x)
+            }
+        val arrow = if (horizontal) (if (d.x > 0) "→" else "←") else (if (d.y > 0) "↓" else "↑")
+        if (next == null) {
+            showDialNote("$arrow no subject that way")
+            return
+        }
+        tracker.lockTo(next.id)
+        focus.reset()            // snap to the new bird instead of gliding across
+        showDialNote("$arrow ${next.det.label}")
+    }
+
+    private fun showDialNote(text: String) {
+        dialNoteMs = SystemClock.elapsedRealtime()
+        _ui.update { it.copy(dialNote = text) }
+    }
+
+    fun setDialSwitch(on: Boolean) {
+        prefs.edit().putBoolean("dialSwitch", on).apply()
+        _ui.update { it.copy(dialSwitch = on) }
+    }
+
     private fun drive(decision: FocusDecision?, st: UiState) {
+        if (st.dialNote.isNotEmpty() && SystemClock.elapsedRealtime() - dialNoteMs > 1800) _ui.update { it.copy(dialNote = "") }
         if (st.hybrid && st.drive != AfDrive.OFF) {
             driveHybrid(decision, st)
             return
@@ -536,5 +608,11 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         private const val HYBRID_MIN_RESEED_MS = 400L
         /** Bodies that report no AF frame: refresh the seed this often. */
         private const val HYBRID_BLIND_RESEED_MS = 1500L
+        /** Smallest AF-frame jump (fraction of frame) that counts as a wheel press. */
+        private const val NUDGE_MIN_JUMP = 0.035f
+        /** Frame moves this soon after Catchlight sent a point are ours, not the user's. */
+        private const val NUDGE_IGNORE_AFTER_SEND_MS = 500L
+        /** One switch per press, even if the frame settles over a few frames. */
+        private const val NUDGE_DEBOUNCE_MS = 350L
     }
 }

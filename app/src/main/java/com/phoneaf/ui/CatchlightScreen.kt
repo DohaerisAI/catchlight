@@ -166,6 +166,7 @@ private fun StatusLine(ui: UiState, live: ConnState.Live, vm: PhoneAfViewModel, 
             Micro("%.0f fps".format(ui.liveFps))
             Micro("${ui.inferMs} ms")
         }
+        if (ui.dialNote.isNotEmpty()) Micro(ui.dialNote, Ink.Text, modifier = Modifier.padding(start = 12.dp))
         if (ui.hybrid) Micro("Hybrid", Ink.Text, modifier = Modifier.padding(start = 12.dp))
         if (ui.locked) {
             Micro("Locked ×", Ink.Text, modifier = Modifier.clickable { vm.releaseLock() }.padding(start = 12.dp))

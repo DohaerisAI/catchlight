@@ -113,6 +113,13 @@ class SubjectTracker {
         return true
     }
 
+    /** Lock onto a specific track (camera-dial subject switching). */
+    fun lockTo(id: Int) {
+        if (tracks.none { it.id == id }) return
+        userLockId = id
+        primaryId = id
+    }
+
     fun clearLock() { userLockId = null }
     val isUserLocked get() = userLockId != null
 

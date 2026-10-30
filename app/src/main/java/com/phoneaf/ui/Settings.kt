@@ -85,6 +85,8 @@ fun SettingsSheet(ui: UiState, vm: PhoneAfViewModel, onImportModel: () -> Unit, 
         SliderRow("Lock-on hold", "${t.holdMs} ms", t.holdMs.toFloat(), 0f..2000f) { vm.setTuning(t.copy(holdMs = it.toInt())) }
         SliderRow("Tracking stickiness", "%.2f".format(ui.stickiness), ui.stickiness, 0f..1f, vm::setStickiness)
         SliderRow("Detection threshold", "%.2f".format(ui.minScore), ui.minScore, 0.1f..0.8f, vm::setMinScore)
+        ToggleRow("Switch subject with the camera wheel", ui.dialSwitch, vm::setDialSwitch)
+        Note("With several birds in frame, press the camera's wheel left/right/up/down: Catchlight sees its AF spot move and locks onto the next bird that way. Experimental; off during Hybrid tracking.")
         ToggleRow("Hybrid tracking", ui.hybrid, vm::setHybrid)
         Note(
             "Catchlight finds the eye and places the start point; the camera's own Real-time Tracking follows the subject. " +
