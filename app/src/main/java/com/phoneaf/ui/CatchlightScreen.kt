@@ -345,7 +345,15 @@ private fun DrawScope.drawOverlays(ui: UiState, measurer: TextMeasurer) {
         drawLine(Ink.Accent, Offset(tl.x - gap, c.y), Offset(tl.x - gap - tick, c.y), stroke)
         drawLine(Ink.Accent, Offset(tl.x + side + gap, c.y), Offset(tl.x + side + gap + tick, c.y), stroke)
         val label = d.part.name + (ui.topDet?.substringAfterLast(' ')?.removeSuffix("%")?.toIntOrNull()?.let { " %.2f".format(it / 100f) } ?: "")
-        drawText(measurer, label, Offset(tl.x + side + gap + tick + 4.dp.toPx(), c.y - 7.dp.toPx()), Ink.micro(9.5.sp, Ink.Accent))
+        // Label to the right of the reticle, flipped to the left near the edge; drawText throws
+        // if its top-left lands outside the canvas, so clamp it fully inside.
+        val layout = measurer.measure(label, Ink.micro(9.5.sp, Ink.Accent))
+        val pad = gap + tick + 4.dp.toPx()
+        val w = layout.size.width.toFloat(); val h = layout.size.height.toFloat()
+        val right = tl.x + side + pad
+        val x = (if (right + w <= size.width) right else tl.x - pad - w).coerceIn(0f, (size.width - w).coerceAtLeast(0f))
+        val y = (c.y - h / 2).coerceIn(0f, (size.height - h).coerceAtLeast(0f))
+        drawText(layout, topLeft = Offset(x, y))
     }
 }
 
