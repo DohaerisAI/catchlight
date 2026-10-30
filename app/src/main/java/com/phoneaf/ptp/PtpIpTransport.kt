@@ -30,6 +30,9 @@ class PtpIpTransport private constructor(
 
     @Volatile override var lastError: String = ""
         private set
+    /** Set when a read failed mid-packet: the byte stream has lost its framing and can't be trusted. */
+    @Volatile override var broken = false
+        private set
     override val describe get() = "PTP/IP $host:$PORT"
 
     init {
@@ -46,9 +49,11 @@ class PtpIpTransport private constructor(
 
     @Synchronized
     override fun transact(op: Int, params: IntArray, dataOut: ByteArray?, timeoutMs: Int, stallIsOk: Boolean): PtpResult {
+        if (broken) return fail("Wi-Fi link closed")
         transactionId = if (transactionId >= 0x0FFFFFFF) 1 else transactionId + 1
         val tid = transactionId
         val opName = "0x" + op.toString(16)
+        var midPacket = false
         try {
             cmd.soTimeout = timeoutMs.coerceAtLeast(500)
 
@@ -76,8 +81,12 @@ class PtpIpTransport private constructor(
             val data = ByteArrayOutputStream()
             while (true) {
                 val len = Integer.reverseBytes(cmdIn.readInt())
+                midPacket = true
+                // A desynced stream reads image bytes as a length; never trust an absurd one.
+                if (len < 8 || len > MAX_PACKET) { breakLink(); return fail("$opName: bad PTP/IP packet length $len") }
                 val type = Integer.reverseBytes(cmdIn.readInt())
                 val body = ByteArray(len - 8).also { cmdIn.readFully(it) }
+                midPacket = false
                 val bb = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN)
                 when (type) {
                     TYPE_START_DATA -> Unit // tid + total length; we just accumulate
@@ -96,11 +105,25 @@ class PtpIpTransport private constructor(
                 }
             }
         } catch (e: SocketTimeoutException) {
+            // Timed out between packets: the stream is still aligned, a late reply is skipped by tid.
+            // Timed out inside a packet: the rest of it is still coming, so the stream is unusable.
+            if (midPacket) { breakLink(); return fail("$opName: Wi-Fi stalled mid-transfer") }
             if (stallIsOk) return PtpResult(Ptp.RESP_OK)
             return fail("$opName: no response over Wi-Fi in ${timeoutMs}ms")
         } catch (e: Exception) {
+            breakLink()
             return fail("$opName: ${e.javaClass.simpleName} ${e.message ?: ""}".trim())
+        } catch (e: OutOfMemoryError) {
+            breakLink()
+            return fail("$opName: out of memory reading Wi-Fi data")
         }
+    }
+
+    private fun breakLink() {
+        broken = true
+        open = false
+        runCatching { cmd.close() }
+        runCatching { evt.close() }
     }
 
     /** PTP/IP has no device reset; a stale session is cleared by reconnecting. */
@@ -133,6 +156,8 @@ class PtpIpTransport private constructor(
         private const val TYPE_DATA = 10
         private const val TYPE_END_DATA = 12
         private const val CHUNK = 64 * 1024
+        /** Largest packet we accept; a live-view frame is well under 2 MB. */
+        private const val MAX_PACKET = 32 * 1024 * 1024
 
         private fun le(size: Int) = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN)
 

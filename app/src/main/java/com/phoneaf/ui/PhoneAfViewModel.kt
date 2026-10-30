@@ -77,6 +77,8 @@ data class UiState(
     val dialSwitch: Boolean = true,
     /** Last dial switch, e.g. "→ bird", shown briefly; empty when none. */
     val dialNote: String = "",
+    /** Why the previous run ended badly, shown once so it can be copied into a bug report. */
+    val crashReport: String? = null,
     val rotation: CamRotation = CamRotation.LANDSCAPE,
     /** Labels the user restricted detection to (empty = everything the mode allows). */
     val classes: Set<String> = emptySet(),
@@ -336,6 +338,12 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             }
             val all = raw.getOrDefault(emptyList())
             val found = all.filter { it.kind in st.mode.kinds }
+                .filter { d ->
+                    // In Object modes, beds, tables and room-sized boxes are scenery, not subjects,
+                    // unless the user picked that class explicitly.
+                    d.kind != SubjectKind.OBJECT || d.label in st.classes ||
+                        (d.label !in SCENERY_LABELS && d.box.area < 0.45f)
+                }
 
             // Tracking first (gives us motion), then parts only for the subject that matters.
             tracker.update(found, st.mode, st.stickiness, ts)
@@ -495,6 +503,9 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(dialNote = text) }
     }
 
+    fun setCrashReport(text: String) = _ui.update { it.copy(crashReport = text) }
+    fun dismissCrashReport() = _ui.update { it.copy(crashReport = null) }
+
     fun setDialSwitch(on: Boolean) {
         prefs.edit().putBoolean("dialSwitch", on).apply()
         _ui.update { it.copy(dialSwitch = on) }
@@ -608,6 +619,8 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
         private const val HYBRID_MIN_RESEED_MS = 400L
         /** Bodies that report no AF frame: refresh the seed this often. */
         private const val HYBRID_BLIND_RESEED_MS = 1500L
+        /** COCO classes that are usually the background, not what you're photographing. */
+        private val SCENERY_LABELS = setOf("bed", "dining table", "couch", "chair", "bench", "toilet", "tv", "refrigerator", "oven", "sink")
         /** Smallest AF-frame jump (fraction of frame) that counts as a wheel press. */
         private const val NUDGE_MIN_JUMP = 0.035f
         /** Frame moves this soon after Catchlight sent a point are ours, not the user's. */

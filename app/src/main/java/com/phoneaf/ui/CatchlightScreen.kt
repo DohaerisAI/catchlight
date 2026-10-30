@@ -148,6 +148,7 @@ fun CatchlightApp(vm: PhoneAfViewModel, onImportModel: () -> Unit) {
         }
     }
     if (showClasses) ClassPicker(ui, onDismiss = { showClasses = false }, onChange = vm::setClasses)
+    ui.crashReport?.let { report -> CrashDialog(report, onDismiss = vm::dismissCrashReport) }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -434,4 +435,30 @@ private fun SetupLine(index: String, text: String) {
         Micro(index, Ink.Faint, modifier = Modifier.width(32.dp))
         Text(text, style = Ink.Body.copy(fontSize = 13.sp), color = Ink.Text)
     }
+}
+
+@Composable
+private fun CrashDialog(report: String, onDismiss: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Ink.Raised,
+        title = { Text("$APP_NAME stopped last time", style = Ink.Title, color = Ink.Text) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Copy this and send it to the developer. Nothing was uploaded.", style = Ink.Body, color = Ink.Dim)
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(report, style = Ink.micro(10.sp, Ink.Text).copy(letterSpacing = 0.sp, lineHeight = 14.sp), modifier = Modifier.padding(top = 12.dp))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(report))
+                copied = true
+            }) { Micro(if (copied) "Copied" else "Copy", Ink.Text) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Micro("Close") } },
+    )
 }

@@ -24,6 +24,9 @@ interface PtpTransport {
         stallIsOk: Boolean = false,
     ): PtpResult
 
+    /** True once the link is unusable (e.g. a PTP/IP stream lost its framing); reconnect. */
+    val broken: Boolean get() = false
+
     /** Best-effort recovery after a failed OpenSession. */
     fun recover()
 

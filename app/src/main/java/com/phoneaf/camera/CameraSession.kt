@@ -351,6 +351,7 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
                     val r = cam.setAfPoint(p.x, p.y)
                     lastAfResult = Ptp.name(r.code) + " (" + (cam.afPath?.short ?: "auto") + ")"
                 }
+                if (transport.broken) return true to (transport.lastError.ifEmpty { "Link lost" })
                 val frame = cam.liveView()
                 if (frame == null) {
                     if (++misses > 150) return true to "Live view stopped responding"

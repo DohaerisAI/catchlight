@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        CrashReport.install(applicationContext)
+        CrashReport.takePrevious(applicationContext)?.let(vm::setCrashReport)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Viewfinder convention: bars hidden, swipe to peek.
         WindowInsetsControllerCompat(window, window.decorView).apply {
