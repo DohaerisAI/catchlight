@@ -521,9 +521,11 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             driveHybrid(decision, st)
             return
         }
-        // Every move while S1 is held costs a release/re-press, so move less often then.
+        // Every move while S1 is held is a release/re-press, which restarts the camera's AF. At 6 Hz
+        // it never got to finish (logged: S1 cycling every ~300 ms, camera stayed "idle"), so while
+        // S1 is held move at most twice a second and only for a real shift (~5% of the frame).
         val tuning = if (s1Held) st.tuning.copy(
-            maxRateHz = minOf(st.tuning.maxRateHz, 6), deadbandGrid = maxOf(st.tuning.deadbandGrid, 14),
+            maxRateHz = minOf(st.tuning.maxRateHz, 2), deadbandGrid = maxOf(st.tuning.deadbandGrid, 32),
         ) else st.tuning
         if (decision != null && focus.shouldSend(decision.point, tuning, SystemClock.elapsedRealtime())) {
             sendAf(decision.point)

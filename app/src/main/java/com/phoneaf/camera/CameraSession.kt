@@ -341,7 +341,7 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
                     pollNow = false
                     lastPoll = now
                     cam.readFocusSettings()?.let { s ->
-                        if (s.focusFound != _focusSettings.value?.focusFound) {
+                        if (s.focusFound != _focusSettings.value?.focusFound || cam.isS1Down) {
                             Log.i(TAG, "camera focus: raw=${s.focusFound} ${FocusStatus.of(s.focusFound).label} s1=${cam.isS1Down} af=$lastAfResult")
                         }
                         _focusSettings.value = s

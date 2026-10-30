@@ -108,7 +108,11 @@ class PtpIpTransport private constructor(
             // Timed out between packets: the stream is still aligned, a late reply is skipped by tid.
             // Timed out inside a packet: the rest of it is still coming, so the stream is unusable.
             if (midPacket) { breakLink(); return fail("$opName: Wi-Fi stalled mid-transfer") }
-            if (stallIsOk) return PtpResult(Ptp.RESP_OK)
+            if (stallIsOk) {
+                // Indistinguishable from "camera ignored us", so make it visible in the log.
+                Log.w(TAG, "$opName: no reply in ${timeoutMs}ms, assumed OK")
+                return PtpResult(Ptp.RESP_OK)
+            }
             return fail("$opName: no response over Wi-Fi in ${timeoutMs}ms")
         } catch (e: Exception) {
             breakLink()
