@@ -156,7 +156,17 @@ fun CatchlightApp(vm: PhoneAfViewModel, onImportModel: () -> Unit) {
 
 @Composable
 private fun StatusLine(ui: UiState, live: ConnState.Live, vm: PhoneAfViewModel, modifier: Modifier) {
-    val afLocked = ui.decision != null && ui.afResult.startsWith("OK")
+    // Lit only when the camera itself reports focus; fall back to "command accepted" on bodies
+    // that don't expose 0xD213.
+    val cam = ui.camFocus
+    val afLocked = if (cam != com.phoneaf.camera.FocusStatus.UNKNOWN) cam == com.phoneaf.camera.FocusStatus.FOCUSED
+        else ui.decision != null && ui.afResult.startsWith("OK")
+    val afLabel = when (cam) {
+        com.phoneaf.camera.FocusStatus.FAILED -> "AF ✕"
+        com.phoneaf.camera.FocusStatus.FOCUSING -> "AF …"
+        com.phoneaf.camera.FocusStatus.IDLE -> "AF off"
+        else -> "AF"
+    }
     Row(
         modifier.fillMaxWidth().padding(top = 14.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -177,7 +187,7 @@ private fun StatusLine(ui: UiState, live: ConnState.Live, vm: PhoneAfViewModel, 
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Dot(if (afLocked) Ink.Accent else Ink.Faint)
-            Micro("AF", if (afLocked) Ink.Accent else Ink.Faint)
+            Micro(afLabel, if (afLocked) Ink.Accent else if (cam == com.phoneaf.camera.FocusStatus.FAILED) Ink.Warn else Ink.Faint)
         }
     }
 }

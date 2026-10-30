@@ -334,12 +334,18 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
             var misses = 0
             var lastPoll = 0L
             while (running) {
-                // Focus Mode / Area can change on the camera at any time; re-read every 2 s.
+                // Focus Mode / Area can change on the camera at any time; re-read every 2 s, and
+                // faster while S1 is held so the camera's own focus state stays current.
                 val now = System.currentTimeMillis()
-                if (pollNow || now - lastPoll > 2000) {
+                if (pollNow || now - lastPoll > (if (cam.isS1Down) 600 else 2000)) {
                     pollNow = false
                     lastPoll = now
-                    cam.readFocusSettings()?.let { _focusSettings.value = it }
+                    cam.readFocusSettings()?.let { s ->
+                        if (s.focusFound != _focusSettings.value?.focusFound) {
+                            Log.i(TAG, "camera focus: raw=${s.focusFound} ${FocusStatus.of(s.focusFound).label} s1=${cam.isS1Down} af=$lastAfResult")
+                        }
+                        _focusSettings.value = s
+                    }
                     capability = cam.capabilityReport(cam.lastPropDump)
                 }
                 var n = 0
@@ -350,6 +356,7 @@ class CameraSession(private val context: Context, private val onFrame: (LiveView
                 pendingAf.getAndSet(null)?.let { p ->
                     val r = cam.setAfPoint(p.x, p.y)
                     lastAfResult = Ptp.name(r.code) + " (" + (cam.afPath?.short ?: "auto") + ")"
+                    Log.d(TAG, "AF point %.2f,%.2f -> %s s1=%s".format(p.x, p.y, lastAfResult, cam.isS1Down))
                 }
                 if (transport.broken) return true to (transport.lastError.ifEmpty { "Link lost" })
                 val frame = cam.liveView()

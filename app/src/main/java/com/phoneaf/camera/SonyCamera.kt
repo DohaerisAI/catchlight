@@ -16,7 +16,31 @@ data class CameraFocusFrame(
 class LiveViewFrame(val jpeg: ByteArray, val cameraFrames: List<CameraFocusFrame>)
 
 /** Raw Sony codes for the two settings that decide whether phoneAF can steer focus. */
-data class FocusSettings(val focusMode: Int?, val focusModeProp: Int?, val focusArea: Int?)
+data class FocusSettings(
+    val focusMode: Int?,
+    val focusModeProp: Int?,
+    val focusArea: Int?,
+    /** Raw 0xD213 "focus found" byte: the camera's own green-dot state (see [FocusStatus]). */
+    val focusFound: Int? = null,
+)
+
+/** What the camera itself says about focus, decoded from 0xD213. */
+enum class FocusStatus(val label: String) {
+    IDLE("idle"), FOCUSING("focusing"), FOCUSED("in focus"), FAILED("can't focus"), UNKNOWN("?");
+
+    companion object {
+        // Sony PTP: 1 = not pressed, 2 = focused (AF-S), 3 = failed, 4/5 = searching / AF-C
+        // working, 6 = focused (AF-C). Raw value is logged so the table can be checked on a body.
+        fun of(raw: Int?): FocusStatus = when (raw) {
+            null -> UNKNOWN
+            1 -> IDLE
+            2, 6 -> FOCUSED
+            3 -> FAILED
+            4, 5 -> FOCUSING
+            else -> UNKNOWN
+        }
+    }
+}
 
 /**
  * Sony Alpha PC-Remote session over USB.
@@ -169,6 +193,7 @@ class SonyCamera(private val t: PtpTransport) {
     @Volatile var afProbeLog: String = ""
         private set
     @Volatile private var s1Down = false
+    val isS1Down get() = s1Down
 
     /** Back to the automatic method. */
     fun resetAfPath() { afPath = null; afAuto = true }
@@ -209,6 +234,7 @@ class SonyCamera(private val t: PtpTransport) {
             focusMode = ptpMode ?: sonyMode,
             focusModeProp = if (ptpMode != null) Ptp.PROP_FOCUS_MODE_PTP else if (sonyMode != null) Ptp.PROP_FOCUS_MODE_SONY else null,
             focusArea = findU16Prop(r.data, Ptp.PROP_FOCUS_AREA, FOCUS_AREA_CODES),
+            focusFound = findU16Prop(r.data, 0xD213, (0..255).toSet()),
         )
     }
 
@@ -303,6 +329,7 @@ class SonyCamera(private val t: PtpTransport) {
     fun halfPress(pressed: Boolean): PtpResult {
         s1Down = pressed
         return control(Ptp.PROP_SHUTTER_HALF, u16(if (pressed) 2 else 1))
+            .also { Log.d("SonyCamera", "S1 ${if (pressed) "down" else "up"} -> ${Ptp.name(it.code)}") }
     }
 
     /** Full press + release (S2). Leaves S1 in whatever state [holdAf] says. */

@@ -99,6 +99,8 @@ data class UiState(
     val modelShort: String = "",
     val topDet: String? = null,
     val afResult: String = "–",
+    /** The camera's own focus state (0xD213), not just "our command was accepted". */
+    val camFocus: com.phoneaf.camera.FocusStatus = com.phoneaf.camera.FocusStatus.UNKNOWN,
     val capability: String = "",
     val modelInfo: String = "Models load when the camera connects",
     val modelError: String? = null,
@@ -168,7 +170,9 @@ class PhoneAfViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
-            session.focusSettings.collect { s -> _ui.update { it.copy(readiness = evaluateReadiness(s)) } }
+            session.focusSettings.collect { s ->
+                _ui.update { it.copy(readiness = evaluateReadiness(s), camFocus = com.phoneaf.camera.FocusStatus.of(s?.focusFound)) }
+            }
         }
         refreshModelList()
         viewModelScope.launch(Dispatchers.Default) { decodeLoop() }
